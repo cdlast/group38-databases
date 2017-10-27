@@ -168,6 +168,7 @@ void testBufMgr()
 
 void test1()
 {
+
 	//Allocating pages in a file...
 	for (i = 0; i < num; i++)
 	{
@@ -193,6 +194,7 @@ void test1()
 
 void test2()
 {
+
 	//Writing and reading back multiple files
 	//The page number and the value should match
 
@@ -203,7 +205,7 @@ void test2()
 		rid2 = page2->insertRecord(tmpbuf);
 
 		int index = random() % num;
-    pageno1 = pid[index];
+    		pageno1 = pid[index];
 		bufMgr->readPage(file1ptr, pageno1, page);
 		sprintf((char*)tmpbuf, "test.1 Page %d %7.1f", pageno1, (float)pageno1);
 		if(strncmp(page->getRecord(rid[index]).c_str(), tmpbuf, strlen(tmpbuf)) != 0)
@@ -258,8 +260,10 @@ void test3()
 
 void test4()
 {
+
 	bufMgr->allocPage(file4ptr, i, page);
 	bufMgr->unPinPage(file4ptr, i, true);
+
 	try
 	{
 		bufMgr->unPinPage(file4ptr, i, false);
@@ -269,11 +273,14 @@ void test4()
 	{
 	}
 
+
 	std::cout << "Test 4 passed" << "\n";
 }
 
 void test5()
 {
+
+
 	for (i = 0; i < num; i++) {
 		bufMgr->allocPage(file5ptr, pid[i], page);
 		sprintf((char*)tmpbuf, "test.5 Page %d %7.1f", pid[i], (float)pid[i]);
@@ -298,19 +305,28 @@ void test5()
 
 void test6()
 {
+
+	bufMgr->printSelf();
 	//flushing file with pages still pinned. Should generate an error
 	for (i = 1; i <= num; i++) {
 		bufMgr->readPage(file1ptr, i, page);
 	}
+	bufMgr->printSelf();
+
 
 	try
 	{
 		bufMgr->flushFile(file1ptr);
+
+
+
 		PRINT_ERROR("ERROR :: Pages pinned for file being flushed. Exception should have been thrown before execution reaches this point.");
 	}
 	catch(PagePinnedException e)
 	{
 	}
+
+
 
 	std::cout << "Test 6 passed" << "\n";
 

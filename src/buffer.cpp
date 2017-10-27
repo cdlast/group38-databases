@@ -13,6 +13,9 @@
 #include "exceptions/page_pinned_exception.h"
 #include "exceptions/bad_buffer_exception.h"
 #include "exceptions/hash_not_found_exception.h"
+#include "exceptions/invalid_page_exception.h"
+#include "exceptions/hash_already_present_exception.h"
+#include "exceptions/hash_table_exception.h"
 
 namespace badgerdb { 
 
@@ -40,12 +43,12 @@ BufMgr::BufMgr(std::uint32_t bufs)
 BufMgr::~BufMgr()
 {
   // flush all dirty pages to file
-	for (int i = 0; i < numBufs - 1; i++) {
-	    BufDesc bf = this->bufDescTable[i];
-	    flushFile(bf.file);
+	for (unsigned int i = 0; i < numBufs; i++) {
+	    BufDesc *bf = &this->bufDescTable[i];
+	    flushFile(bf->file);
 	}
     delete hashTable;
-  	delete bufPool;
+    delete bufPool;
     delete bufDescTable;
 }
 
@@ -60,10 +63,10 @@ void BufMgr::advanceClock()
   // FrameId (uint32_t) clockHand
   
   // Check if clockHand has reached numBufs - 1
-  if (clockHand == numBufs - 1) {
+  clockHand++;
+
+  if (clockHand >= numBufs) {
     clockHand = 0;
-  } else {
-    clockHand++;
   }
 }
 
@@ -72,56 +75,56 @@ void BufMgr::advanceClock()
 // frame is the return value
 void BufMgr::allocBuf(FrameId & frame) 
 {
-	int numPinnedFrames = 0;
+	unsigned int numPinnedFrames = 0;
 	// Implement flow chart here!
 	while(true) {
 		advanceClock();
-		BufDesc bf = this->bufDescTable[this->clockHand];
+		BufDesc *bf = &this->bufDescTable[this->clockHand];
 
 		// check if valid is set
-		if (bf.valid) {
+		if (bf->valid) {
 			// check if refbit is set
-			if (bf.refbit) {
+			if (bf->refbit) {
 				// clear and continue ^^^
-				bf.refbit = false;
+				bf->refbit = false;
 				continue;
 
 			} else {
 				// check if page is pinned
-				if (bf.pinCnt > 0) {
+				if (bf->pinCnt > 0) {
 					if (numBufs == ++numPinnedFrames)
-						throw BufferExceededException;
+						throw BufferExceededException();
 					continue;
 
 				} else {
 					// check dirty bit
-					if (bf.dirty) {
+					if (bf->dirty) {
 						// flush page to disk
 						try {
-							bf.file->writePage(bf.file->readPage(bf.pageNo));
+							bf->file->writePage(bf->file->readPage(bf->pageNo));
 
 							// remove from hashtable
 							try {
-								this->hashTable->remove(bf.file, bf.pageNo);
+								this->hashTable->remove(bf->file, bf->pageNo);
 							} catch (HashNotFoundException &e) {
 								//do nothing
 							}
 
-							bf.dirty = false;
+							bf->dirty = false;
 
 						} catch (InvalidPageException &e) {
 							// do nothing
 						}
 
 						// call set on the frame
-						bf.Set(bf.frameNo);
-						frame = bf.frameNo;
+						bf->Set(bf->file, bf->pageNo);
+						frame = this->clockHand;
 						return;
 
 					} else {
 						// call set on the frame
-						bf.Set(bf.frameNo);
-						frame = bf.frameNo;
+						bf->Set(bf->file, bf->pageNo);
+						frame = this->clockHand;
 						return;
 					}
 				}
@@ -129,8 +132,8 @@ void BufMgr::allocBuf(FrameId & frame)
 
 		} else {
 			// if not valid, call set on frame
-			bf.Set(bf.frameNo);
-			frame = bf.frameNo;
+			bf->Set(bf->file, bf->pageNo);
+			frame = this->clockHand;
 			return;
 		}
 	}
@@ -157,41 +160,56 @@ void BufMgr::readPage(File* file, const PageId pageNo, Page*& page)
 	try {
 		// if page is already in buffer pool, do this
 		this->hashTable->lookup(file, pageNo, frameNo);
-		BufDesc bf = this->bufDescTable[frameNo];
 
-		bf.refbit = true;
-		bf.pinCnt++;
+std::cout << "frameNo:" << frameNo << ":" << file->filename() << std::endl;
+
+
+		BufDesc *bf = &this->bufDescTable[frameNo];
+
+std::cout << "frameNo:" << frameNo << ":" << bf->file->filename() << std::endl;
+
+std::cout << "HERE1" << std::endl;
+
+		bf->refbit = true;
+		bf->pinCnt++;
 
 		// return address to page in buffer pool
 		page = &(this->bufPool[frameNo]);
-		return;
+
 	} catch (HashNotFoundException &e) {
+
+std::cout << "HERE2" << std::endl;
 		// if page is not in the buffer pool, do this
+
+
+		// read page from disk
+		Page pageRead = file->readPage(pageNo);
 		allocBuf(frameNo);
+		this->bufPool[frameNo] = pageRead;
+
+
+		// remove OLD from hashtable
+		BufDesc *bff = &this->bufDescTable[frameNo];
+		this->hashTable->remove(bff->file, bff->pageNo);
+
+
 		try {
-			// read page from disk
-			Page pageRead = file->readPage(pageNo, true); // second param prevents reading unused pages if false
-			this->bufPool[frameNo] = pageRead;
-
-			try {
-				this->hashTable->insert(file, pageNo, frameNo);
-
-			} catch (HashAlreadyPresentException &e) {
-				// do nothing
-			} catch (HashTableException &e) {
-				// still do nothing
-			}
-
-			// set description bits for new page in the buffer description
-			BufDesc bf = this->bufDescTable[frameNo];
-			bf.Set(file, pageNo);
-
-			// return address to page in buffer pool
-			page = &(this->bufPool[frameNo]);
-			return;
-		} catch (InvalidPageException &e) {
+			this->hashTable->insert(file, pageNo, frameNo);
+		} catch (HashAlreadyPresentException &e) {
 			// do nothing
+		} catch (HashTableException &e) {
+			// still do nothing
 		}
+
+		// set description bits for new page in the buffer description
+		BufDesc *bf = &this->bufDescTable[frameNo];
+
+std::cout << "file: " << file << std::endl;
+		bf->Set(file, pageNo);
+std::cout << "file: " << bf->file << std::endl;
+
+		// return address to page in buffer pool
+		page = &(this->bufPool[frameNo]);
 
 	}
 }
@@ -208,14 +226,14 @@ void BufMgr::unPinPage(File* file, const PageId pageNo, const bool dirty)
     return;
   }
 
-  BufDesc bf = this->bufDescTable[fid];
+  BufDesc *bf = &this->bufDescTable[fid];
 
-  if (bf.pinCnt == 0) {
-    throw PageNotPinnedException;
+  if (bf->pinCnt == 0) {
+    throw PageNotPinnedException(file->filename(), pageNo, fid);
   }
 
-  bf.dirty = dirty;
-  bf.pinCnt--;
+  bf->dirty = dirty;
+  bf->pinCnt--;
 }
 
 void BufMgr::flushFile(const File* file) 
@@ -226,48 +244,40 @@ void BufMgr::flushFile(const File* file)
 		return;
 	}
 
-  for (int i = 0; i < numBufs - 1; i++) {
-    BufDesc bf = this->bufDescTable[i];
+  for (unsigned int i = 0; i < numBufs; i++) {
+    BufDesc *bf = &this->bufDescTable[i];
 
     // only operate on bufDesc entries related to our file input
-    if (bf.file == file) {
+    if (bf->file->filename() == file->filename()) {
 
       // check if valid
-      if (!bf.valid) throw BadBufferException;
+      if (!bf->valid) throw BadBufferException(bf->frameNo, bf->dirty, bf->valid, bf->refbit);
 
       // consider this bufDesc
-      if (bf.pinCnt > 0) throw PagePinnedException;
+      if (bf->pinCnt > 0) throw PagePinnedException(file->filename(), bf->pageNo, bf->frameNo);
 
-      if (bf.dirty) {
+      if (bf->dirty) {
         // write out page of pageNum to File
     	try {
-          bf.file->writePage(bf.file->readPage(bf.pageNo));
+          bf->file->writePage(bf->file->readPage(bf->pageNo));
     	} catch (InvalidPageException &e) {
     		// do nothing
     	}
-        bf.dirty = false;
+        bf->dirty = false;
       }
 
       try {
-    	  this->hashTable->remove(bf.file, bf.pageNo);
+    	  this->hashTable->remove(bf->file, bf->pageNo);
       } catch (HashNotFoundException &e) {
     	  //do nothing
       }
-      bf.Clear();
+      bf->Clear();
     }
   }
 }
 
 // Allocates a new, empty page in the file and returns the Page object
 // The new page is also assigned a frame in the buffer pool
-
-
-
-// PUBLIC
-
-// TODO: this is the master function that the client calls to get a page.
-// Steps:
-// 1) look for the requested pageNo
 
 void BufMgr::allocPage(File* file, PageId &pageNo, Page*& page) 
 {
@@ -279,13 +289,12 @@ void BufMgr::allocPage(File* file, PageId &pageNo, Page*& page)
   //obtain frame for buffer pool
   allocBuf(frameNo);
 
-
-  BufDesc bf = this->bufDescTable[frameNo];
+  BufDesc *bf = &this->bufDescTable[frameNo];
 
   // entry inserted into hash table and set
   try {
   	this->hashTable->insert(file, pageNo, frameNo);
-  	bf.Set(file, pageNo);
+  	bf->Set(file, pageNo);
   } catch (HashAlreadyPresentException &e) {
   	// do nothing
   } catch (HashTableException &e) {
@@ -301,25 +310,23 @@ void BufMgr::allocPage(File* file, PageId &pageNo, Page*& page)
 
 // Delete a page from file and also from buffer pool if present
 // Don't need to check if page is dirty
-
-// PRIVATE
 void BufMgr::disposePage(File* file, const PageId PageNo)
 {
-  for (int i = 0; i < numBufs - 1; i++) {
-	    BufDesc bf = this->bufDescTable[i];
+  for (unsigned int i = 0; i < numBufs; i++) {
+	    BufDesc *bf = &this->bufDescTable[i];
 
 	    // only operate on bufDesc entries related to our file input
-	  if (bf.file == file) {
+	  if (bf->file == file) {
 		  // remove page from file and buffer file
 		  file->deletePage(PageNo);
 
 		  // remove from hashtable
 		  try {
-			  this->hashTable->remove(bf.file, bf.pageNo);
+			  this->hashTable->remove(bf->file, bf->pageNo);
 		  } catch (HashNotFoundException &e) {
 			  //do nothing
 		  }
-		  bf.Clear();
+		  bf->Clear();
 	  }
   }
 }
