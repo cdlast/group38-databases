@@ -161,21 +161,25 @@ void BufMgr::readPage(File* file, const PageId pageNo, Page*& page)
 		// if page is already in buffer pool, do this
 		this->hashTable->lookup(file, pageNo, frameNo);
 
-std::cout << "frameNo:" << frameNo << ":" << file->filename() << std::endl;
+
+	std::cout << "frameNo:" << frameNo << ":" << file->filename() << std::endl;
 
 
 		BufDesc *bf = &this->bufDescTable[frameNo];
 
-std::cout << "frameNo:" << frameNo << ":" << bf->file->filename() << std::endl;
+	std::cout << "frameNo:" << frameNo << ":" << bf->file->filename() << std::endl;
 
-std::cout << "HERE1" << std::endl;
+		/**if(!(bf->file->filename() == file->filename())){
+		throw HashNotFoundException(file->filename(), pageNo);
+		}*/
+	std::cout << "HERE1" << std::endl;
+
 
 		bf->refbit = true;
 		bf->pinCnt++;
 
 		// return address to page in buffer pool
 		page = &(this->bufPool[frameNo]);
-
 	} catch (HashNotFoundException &e) {
 
 std::cout << "HERE2" << std::endl;
@@ -210,6 +214,7 @@ std::cout << "file: " << bf->file << std::endl;
 
 		// return address to page in buffer pool
 		page = &(this->bufPool[frameNo]);
+std::cout << "Here 3" << std::endl;
 
 	}
 }
@@ -255,6 +260,11 @@ void BufMgr::flushFile(const File* file)
 
       // consider this bufDesc
       if (bf->pinCnt > 0) throw PagePinnedException(file->filename(), bf->pageNo, bf->frameNo);
+	}
+  }
+  for (unsigned int i = 0; i < numBufs; i++) {
+    BufDesc *bf = &this->bufDescTable[i];
+    if (bf->file->filename() == file->filename()) {
 
       if (bf->dirty) {
         // write out page of pageNum to File
